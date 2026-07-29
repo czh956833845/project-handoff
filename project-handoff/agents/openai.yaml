@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Handoff"
+  short_description: "Enforce durable state for every project workspace task"
+  default_prompt: "Use $project-handoff before any project work to initialize or resume the durable handoff."
