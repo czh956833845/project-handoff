@@ -1,6 +1,6 @@
 ---
 name: project-handoff
-description: Maintain a durable `docs/project/HANDOFF.md` checkpoint for Codex or Kimi Code project work. Invoke for every project-workspace task when starting or resuming work, and refresh after important phases, before pauses or handoffs, before detectable context compaction, and after compaction so goals, boundaries, decisions, completed work, evidence, active files, open items, and the next action survive context loss. Do not invoke for pure conversation unrelated to project inspection or changes.
+description: Maintain a durable `docs/project/HANDOFF.md` checkpoint across Codex, Kimi Code, Claude Code, Gemini CLI, GitHub Copilot, Cline, and Qwen Code project work. Invoke for every project-workspace task when starting or resuming work, and refresh after important phases, before pauses or handoffs, before detectable context compaction, and after compaction so goals, boundaries, decisions, completed work, evidence, active files, open items, and the next action survive context loss. Do not invoke for pure conversation unrelated to project inspection or changes.
 ---
 
 # Project Handoff
@@ -33,6 +33,39 @@ Treat a feature completion, resolved defect, accepted decision, completed invest
 
 Codex clients may compact without exposing advance notice. Never claim that a pre-compaction refresh happened without a signal. Use phase-end and pause checkpoints as the required fallback.
 
+## Install supported client integrations
+
+For Claude Code, Gemini CLI, GitHub Copilot, Cline, or Qwen Code, first read
+`references/client-integrations.md` completely. It defines the supported
+scopes, exact event names, upstream limitations, install paths, and recovery
+behavior.
+
+Use the unified installer:
+
+```bash
+python3 <skill-directory>/scripts/install_client_hook.py install \
+  --client <claude|gemini|copilot|cline|qwen> \
+  --scope <supported-scope>
+```
+
+Use the same client and scope with the `doctor` action to verify the generated
+configuration and the `uninstall` action to remove only project-handoff-owned
+entries or files. Inspect an existing target before installation. Never use
+`--force` for Cline unless the user explicitly approved replacing the exact
+unrelated hook file.
+
+Claude Code and Qwen Code use `PreCompact`; Gemini CLI uses the advisory
+`PreCompress` event; GitHub Copilot uses `preCompact` or its
+VS Code-compatible `PreCompact` form. Cline currently declares `PreCompact`
+upstream but marks it as not wired, so its installed TaskStart, TaskResume,
+TaskComplete, and SessionShutdown hooks are lifecycle fallbacks rather than
+true compaction detection. Cline upstream file hooks also do not currently
+support Windows.
+
+All client adapters are fail-open. They save exact emergency evidence and a
+pending marker, but they do not semantically understand the disappearing
+conversation or rewrite the canonical handoff.
+
 ## Install Kimi Code integration
 
 When configuring this Skill for Kimi Code CLI, inspect the target configuration and run:
@@ -47,9 +80,9 @@ The installer atomically creates or updates one managed Kimi `PreCompact` hook f
 
 The installed hook invokes `scripts/kimi_precompact_hook.py`. Kimi Code ignores `PreCompact` return values, so the hook never claims that it semantically refreshed the canonical handoff. Instead, when `docs/project/HANDOFF.md` exists under the event `cwd`, it writes the current bytes atomically to `docs/project/handoff-emergency/` and then atomically writes `docs/project/.handoff-precompact-pending.json`. A project without a handoff is left unchanged. Hook errors are fail-open and must be reported as missing recovery evidence, not as a completed checkpoint.
 
-## Recover after Kimi compaction
+## Recover after a captured event
 
-After reading `docs/project/HANDOFF.md` as the first project action, check `docs/project/.handoff-precompact-pending.json` before continuing any project reasoning or mutation. If the marker exists:
+After reading `docs/project/HANDOFF.md` as the first project action, check `docs/project/.handoff-precompact-pending.json` before continuing any project reasoning or mutation. This applies after Kimi, Claude, Gemini, Copilot, Cline, or Qwen capture. If the marker exists:
 
 1. Read it completely and verify that its `project_root` matches the active project.
 2. Read the referenced emergency snapshot completely.

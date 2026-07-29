@@ -1,114 +1,111 @@
 # Project Handoff
 
-> Durable, conflict-safe project checkpoints for AI coding agents.
+> 为 AI 编程 Agent 提供可恢复、抗冲突、跨客户端的项目工作交接。
 
-`project-handoff` 是一个面向 AI 编程助手的项目交接 Skill。它把项目的关键工作状态持续保存在固定文件 `docs/project/HANDOFF.md` 中，让 Agent 在对话被压缩、任务暂停、切换会话或更换 Agent 后，仍然能够从明确且可验证的状态继续工作。
+`project-handoff` 把项目当前状态保存在固定文件
+`docs/project/HANDOFF.md`。当对话被压缩、任务暂停、切换会话或更换
+Agent 时，新的上下文可以从一份简洁、可验证的“项目接力本”继续工作。
 
-它不是聊天记录备份工具，而是一份简洁的“项目接力本”：只保留继续工作真正需要的目标、边界、决定、进度、证据和下一步。
+它不是聊天记录备份工具。它只维护继续项目真正需要的目标、边界、决定、
+已完成工作、验证证据、当前文件、未完成事项和下一步。
 
-## 它解决什么问题
+## 解决的问题
 
-长时间使用 AI Agent 处理项目时，常见问题包括：
-
-- 对话上下文压缩后，Agent 忘记之前做过什么；
-- 新会话或新 Agent 需要重新扫描整个项目；
-- 多个 Agent 同时更新交接信息时互相覆盖；
-- 文档写入中断，只留下半份损坏内容；
-- 只记录“已经完成”，却没有测试结果等验证证据；
-- 交接文档不断堆积，最后变成难以阅读的聊天流水账。
-
-`project-handoff` 用一份结构固定、原子更新、带版本历史的项目状态文档解决这些问题。
+- 上下文压缩后忘记已经完成的工作和关键决定；
+- 新会话重新扫描整个项目；
+- 多个 Agent 同时写交接文档，旧状态覆盖新状态；
+- 写入中断，只留下半份损坏文档；
+- 只有“已经完成”的描述，没有测试和构建证据；
+- 历史不断堆积，最后变成聊天流水账。
 
 ## 核心能力
 
-- **项目启动检查**：开始或恢复项目任务时，优先读取 `docs/project/HANDOFF.md`；文件不存在时按模板创建。
-- **固定状态结构**：持续维护目标、边界、关键决定、已完成工作、验证证据、当前文件、未完成事项和下一步。
-- **阶段性检查点**：重要功能完成、缺陷解决、测试结束、决定确认或任务暂停时，增量刷新项目状态。
-- **压缩后恢复**：上下文压缩后，必须先重新读取交接文档，再继续项目推理和修改。
-- **并发写入保护**：使用持久文件锁和 SHA-256 compare-and-swap 版本校验，阻止旧状态覆盖其他 Agent 的新状态。
-- **原子更新**：先完整写入临时文件并同步到磁盘，再原子替换正式文档，避免只写到一半。
-- **历史版本**：自动保留最近 50 个被替换版本，便于检查和恢复。
-- **证据优先**：明确区分已完成、已在本地验证、已在外部验证、计划中和受阻状态。
-- **敏感信息约束**：禁止把令牌、密码、凭证和不必要的个人信息写进交接文档。
+- 项目开始或恢复时优先读取 `docs/project/HANDOFF.md`；
+- 文件不存在时根据模板创建；
+- 固定维护八类当前状态；
+- 重要阶段、暂停和可检测压缩前刷新；
+- 压缩后的第一项项目动作必须重新读取；
+- SHA-256 compare-and-swap 防止旧状态覆盖；
+- POSIX/Windows 文件锁；
+- 临时文件、`fsync` 和原子替换；
+- 保留最近 50 个被替换版本；
+- 压缩事件保存精确紧急快照和 pending marker；
+- 禁止把令牌、密码、凭证写入交接文档。
 
-## 工作方式
+## 交接文档结构
 
-```mermaid
-flowchart TD
-    A["开始或恢复项目任务"] --> B{"HANDOFF.md 是否存在？"}
-    B -- "否" --> C["根据模板创建"]
-    B -- "是" --> D["完整读取当前状态"]
-    C --> E["执行项目工作"]
-    D --> E
-    E --> F["重要阶段结束"]
-    F --> G["校验版本并原子更新"]
-    G --> H["保存旧版本到历史目录"]
-    H --> I{"继续、暂停或发生压缩"}
-    I -- "继续" --> E
-    I -- "暂停" --> J["留下明确的下一步"]
-    I -- "压缩后恢复" --> D
-```
+每份 `HANDOFF.md` 固定维护：
 
-## 交接文档包含什么
+1. `Project goal`
+2. `Scope and boundaries`
+3. `Key decisions`
+4. `Completed work`
+5. `Verification evidence`
+6. `Current files`
+7. `Open items`
+8. `Next step`
 
-每份 `HANDOFF.md` 固定维护以下八类当前状态：
-
-1. `Project goal`：项目目标；
-2. `Scope and boundaries`：工作范围、限制和不能擅自突破的边界；
-3. `Key decisions`：已经确认的重要决定；
-4. `Completed work`：已经完成的工作；
-5. `Verification evidence`：测试命令、构建结果和其他可检查证据；
-6. `Current files`：当前阶段最相关的文件；
-7. `Open items`：尚未完成、待决定或受阻的事项；
-8. `Next step`：下一条可以立即执行的行动。
-
-此外，`Recent updates` 只保留最近的少量里程碑，不把完整对话复制进文档。
+`Recent updates` 只保留最近少量里程碑，不复制完整对话。
 
 ## 文件布局
 
 ```text
 docs/project/
-├── HANDOFF.md                         # 唯一的当前权威状态
-├── .HANDOFF.lock                      # 多 Agent 写入锁
-├── .handoff-precompact-pending.json   # Kimi 压缩后待恢复标记
-├── handoff-history/                   # 最近 50 个历史版本
-└── handoff-emergency/                 # 压缩前紧急快照
+├── HANDOFF.md
+├── .HANDOFF.lock
+├── .handoff-precompact-pending.json
+├── handoff-history/
+└── handoff-emergency/
 ```
 
 ## 客户端支持
 
-| 客户端 | 当前状态 | 压缩处理 |
+| 客户端 | 当前能力 | 平台 |
 | --- | --- | --- |
-| Codex | 已支持 | 项目级强制调用；压缩后首先读取。客户端未提供预告信号时，使用阶段结束和暂停前检查点 |
-| Kimi Code CLI | 已支持 | 已提供 `PreCompact` Hook，覆盖手动和自动压缩，并保存紧急快照和待恢复标记 |
-| Claude Code、Gemini CLI、GitHub Copilot、Cline、Qwen Code | 计划支持 | 已完成兼容性研究，尚未实现适配器 |
-| Cursor、OpenCode、Windsurf、Kiro | 评估或后续支持 | 根据各客户端公开的 Skill 和压缩事件能力采用完整适配或降级方案 |
+| Codex | 项目级强制调用；无预告信号时使用阶段结束和暂停检查点 | macOS、Linux、Windows |
+| Kimi Code CLI | 原生 `PreCompact`，覆盖手动和自动压缩 | macOS、Linux |
+| Claude Code | 原生 `PreCompact`，用户级或项目级安装 | macOS、Linux、Windows |
+| Gemini CLI | 原生 advisory `PreCompress`，用户级或项目级安装 | macOS、Linux、Windows |
+| GitHub Copilot | CLI 用户/项目模式；Cloud Coding Agent 仓库模式 | macOS、Linux、Windows、Cloud Linux |
+| Qwen Code | 原生 `PreCompact`，用户级或项目级安装 | macOS、Linux、Windows |
+| Cline | 已接线生命周期兜底；预备 `PreCompact` 适配器 | macOS、Linux |
 
-当前核心更新器使用 Unix `fcntl` 文件锁，因此支持 macOS 和 Linux，尚未完成原生 Windows 兼容。
+### Cline 的准确边界
+
+Cline 当前官方仓库已经定义 `PreCompact` 类型和模板，但同时明确标注
+“coming soon”和“not wired”。因此本项目不会声称 Cline 已经具备真正的
+压缩前感知。
+
+Cline 安装器会提供：
+
+- `TaskStart`
+- `TaskResume`
+- `TaskComplete`
+- `SessionShutdown`
+- 为上游接线后准备的 `PreCompact`
+
+前四项用于阶段保存和恢复提醒。Cline 官方当前也注明文件 Hook 不支持
+Windows，所以安装器会明确报告限制，不生成无法运行的假配置。
+
+## 要求
+
+- Python 3.10 或更高版本；
+- 下载后的 `project-handoff/` 目录保持完整；
+- 使用项目级 Hook 时，目标项目必须信任并允许对应客户端运行 Hook。
 
 ## 安装到 Codex
-
-要求：Python 3.10 或更高版本。
-
-下载仓库后，把 `project-handoff` 目录复制或链接到 Codex 的 Skills 目录：
 
 ```bash
 mkdir -p ~/.codex/skills
 cp -R project-handoff ~/.codex/skills/project-handoff
-```
 
-然后把项目工作区强制调用规则安装到全局 `AGENTS.md`：
-
-```bash
 python3 ~/.codex/skills/project-handoff/scripts/install_global_rule.py \
   --agents-file ~/.codex/AGENTS.md
 ```
 
-安装器只维护带有 `project-handoff` 标记的配置块，不会覆盖文件中的其他规则；重复执行是安全的。
+全局规则安装器只管理带 `project-handoff` 标记的块。
 
 ## 接入 Kimi Code CLI
-
-先让 Kimi Code 能够发现本 Skill，再将 `PreCompact` Hook 注册到 Kimi 配置中：
 
 ```bash
 python3 /absolute/path/to/project-handoff/scripts/install_kimi_hook.py \
@@ -116,33 +113,138 @@ python3 /absolute/path/to/project-handoff/scripts/install_kimi_hook.py \
   --skill-root /absolute/path/to/project-handoff
 ```
 
-安装器会原子创建或更新一个受管理的 `PreCompact` 配置块，并保留 `config.toml` 中的其他内容。
+## 统一客户端安装器
 
-Kimi 的 Hook 负责在压缩前保存当前 `HANDOFF.md` 的紧急副本和恢复标记。它不会假装自己能够在 Hook 中重新理解整段对话并智能改写交接文档；语义更新仍然由 Agent 在阶段检查点执行。
+以下命令都由下载本仓库的用户自行运行。本项目的开发测试不会修改维护者
+电脑上的 Claude、Gemini、Copilot、Cline 或 Qwen 配置。
+
+### Claude Code
+
+```bash
+python3 project-handoff/scripts/install_client_hook.py install \
+  --client claude --scope user
+
+python3 /path/to/project-handoff/scripts/install_client_hook.py install \
+  --client claude --scope project --project-root /path/to/project
+```
+
+### Gemini CLI
+
+```bash
+python3 project-handoff/scripts/install_client_hook.py install \
+  --client gemini --scope user
+
+python3 /path/to/project-handoff/scripts/install_client_hook.py install \
+  --client gemini --scope project --project-root /path/to/project
+```
+
+### GitHub Copilot CLI
+
+```bash
+python3 project-handoff/scripts/install_client_hook.py install \
+  --client copilot --scope user
+
+python3 /path/to/project-handoff/scripts/install_client_hook.py install \
+  --client copilot --scope project --project-root /path/to/project
+```
+
+### GitHub Copilot Cloud Coding Agent
+
+```bash
+python3 /path/to/project-handoff/scripts/install_client_hook.py install \
+  --client copilot --scope cloud --project-root /path/to/project
+```
+
+Cloud 模式会把最小运行时复制到目标项目
+`.github/hooks/project-handoff/`，并生成仓库相对路径配置。云端因此不依赖
+用户电脑上的 Skill 目录。生成文件需要提交到目标仓库。
+
+### Cline
+
+```bash
+# Cline CLI 用户级
+python3 project-handoff/scripts/install_client_hook.py install \
+  --client cline --scope user
+
+# Cline 编辑器用户级
+python3 project-handoff/scripts/install_client_hook.py install \
+  --client cline --scope editor
+
+# 同时生成 CLI 和编辑器项目级兜底 Hook
+python3 /path/to/project-handoff/scripts/install_client_hook.py install \
+  --client cline --scope project --project-root /path/to/project
+```
+
+### Qwen Code
+
+```bash
+python3 project-handoff/scripts/install_client_hook.py install \
+  --client qwen --scope user
+
+python3 /path/to/project-handoff/scripts/install_client_hook.py install \
+  --client qwen --scope project --project-root /path/to/project
+```
+
+## 检查与卸载
+
+把安装命令中的 `install` 改成 `doctor` 即可检查：
+
+```bash
+python3 project-handoff/scripts/install_client_hook.py doctor \
+  --client claude --scope user
+```
+
+只有配置存在且与当前版本一致时，`doctor` 才返回成功。
+
+把动作改成 `uninstall` 会只移除本项目拥有的配置项或文件：
+
+```bash
+python3 project-handoff/scripts/install_client_hook.py uninstall \
+  --client claude --scope user
+```
+
+安装器保留无关配置、拒绝损坏的 JSON、支持重复执行。Cline 遇到同名但不
+属于本项目的 Hook 时会停止；只有在检查并明确接受覆盖时才使用 `--force`。
+
+完整路径、事件字段和平台说明见
+[`project-handoff/references/client-integrations.md`](project-handoff/references/client-integrations.md)。
+
+## Hook 实际做什么
+
+原生压缩事件发生时：
+
+1. 客户端把 JSON 事件发送给适配器；
+2. 适配器找到项目中的 `docs/project/HANDOFF.md`；
+3. 精确复制当前字节到 `handoff-emergency/`；
+4. 原子写入 `.handoff-precompact-pending.json`；
+5. 客户端继续压缩；
+6. 新上下文首先读取正式交接文档，再核对快照。
+
+Hook 不读取完整聊天记录，也不会假装能在压缩前自动理解全部对话并语义
+改写 `HANDOFF.md`。语义更新仍由 Agent 在重要阶段完成。
 
 ## 安全更新
 
-需要手动调用更新器时，先取得当前版本：
+先取得当前版本：
 
 ```bash
 python3 project-handoff/scripts/update_handoff.py revision \
   --project-root /absolute/path/to/project
 ```
 
-准备好完整的新文档后，带上刚才取得的版本执行更新：
+准备完整的新文档后：
 
 ```bash
 python3 project-handoff/scripts/update_handoff.py update \
   --project-root /absolute/path/to/project \
   --content-file /absolute/path/to/new-HANDOFF.md \
-  --expected-revision <sha256-or-absent>
+  --expected-revision SHA256_OR_ABSENT
 ```
 
-如果其他 Agent 已经抢先更新，命令会报告版本冲突。此时必须重新读取最新文档并合并双方状态，不能直接覆盖。
+如果其他 Agent 已经更新，命令会报告冲突。必须重新读取并合并，不能直接
+覆盖。
 
 ## 验证
-
-运行完整测试：
 
 ```bash
 python3 -m unittest discover \
@@ -150,19 +252,15 @@ python3 -m unittest discover \
   -p 'test_*.py'
 ```
 
-当前实现已覆盖交接文档结构校验、原子替换、并发冲突、文件锁、历史保留、全局规则安装、Kimi Hook 安装和压缩前快照。
+测试覆盖原子替换、POSIX/Windows 锁、并发冲突、50 个历史版本、事件
+归一化、配置保留、重复安装、doctor、卸载、Copilot Cloud 自包含运行时、
+Cline 生命周期兜底和临时目录隔离。
 
 ## 设计边界
 
-这个项目有意保持以下边界：
-
 - 不保存完整聊天记录；
-- 不把交接文档当作长期知识库或语义搜索系统；
 - 不自动语义合并两个 Agent 的冲突决定；
-- 不提供跨机器的分布式锁；
-- 客户端没有真正的压缩事件时，不宣称实现了真正的压缩前检查点；
-- 紧急快照是恢复证据，`docs/project/HANDOFF.md` 始终是唯一的当前权威状态。
-
-## 适合谁
-
-如果你正在使用 AI 编程助手处理长周期项目、并行 Agent 任务、跨会话开发或容易触发上下文压缩的大型代码库，`project-handoff` 可以让每一次继续工作都从一份清晰、可验证、不会被半途写坏的项目状态开始。
+- 不提供跨机器分布式锁；
+- 没有真实压缩事件时，不宣称具备压缩前检查点；
+- 紧急快照是恢复证据；
+- `docs/project/HANDOFF.md` 始终是唯一当前权威状态。

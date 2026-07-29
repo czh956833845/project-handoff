@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import os
 import re
 import sys
-import tempfile
-import time
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Sequence
+
+
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIRECTORY))
+
+from file_safety import atomic_write_text, file_lock
 
 
 REQUIRED_SECTIONS = (
@@ -35,6 +38,10 @@ HISTORY_LIMIT = 50
 
 class HandoffConflictError(ValueError):
     pass
+
+
+atomic_write = atomic_write_text
+handoff_lock = file_lock
 
 
 def revision_for_bytes(content: bytes) -> str:
@@ -63,69 +70,6 @@ def validate_content(content: str) -> None:
             problems.append(f"duplicate required section: {section}")
     if problems:
         raise ValueError("; ".join(problems))
-
-
-def _sync_directory(directory: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    try:
-        descriptor = os.open(directory, flags)
-    except OSError:
-        return
-    try:
-        os.fsync(descriptor)
-    except OSError:
-        pass
-    finally:
-        os.close(descriptor)
-
-
-@contextmanager
-def handoff_lock(lock_path: Path, timeout_seconds: float = 10.0) -> Iterator[None]:
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + timeout_seconds
-    with lock_path.open("a+") as handle:
-        while True:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"timed out waiting for handoff lock after {timeout_seconds:g} seconds"
-                    )
-                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
-def atomic_write(destination: Path, content: str) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    existing_mode = destination.stat().st_mode & 0o7777 if destination.exists() else None
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="",
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary_path = Path(handle.name)
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if existing_mode is not None:
-            temporary_path.chmod(existing_mode)
-        os.replace(temporary_path, destination)
-        temporary_path = None
-        _sync_directory(destination.parent)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
 
 
 def create_snapshot(history_dir: Path, old_bytes: bytes, revision: str) -> Path:
